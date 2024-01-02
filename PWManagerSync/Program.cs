@@ -106,6 +106,7 @@ namespace PWManagerSync {
 
                 var type = req.ContentType;
                 if (type == null || !type.Contains("application/json", StringComparison.OrdinalIgnoreCase)) { //only support JSON content
+                    Console.WriteLine("Rejecting sync/confirm: Content type must be JSON");
                     throw new HttpException(HttpStatusCode.UnsupportedMediaType);
                 }
 
@@ -143,12 +144,16 @@ namespace PWManagerSync {
                         }
 
                         if (!requestFound) { //if confirmed sync not found: return error
+                            Console.WriteLine("Rejecting confirm: Unknown request uuid");
                             throw new HttpException(HttpStatusCode.NotFound, "Sync Request Not Found");
                         }
                     } else { //unknown request (should not happen)
+                        Console.WriteLine("Rejecting sync/confirm: Unknown path (somehow)");
                         throw new HttpException(HttpStatusCode.NotFound);
                     }
-                } catch (JsonException) { //return error if json parsing fails
+                } catch (JsonException ex) { //return error if json parsing fails
+                    Console.WriteLine("Rejecting sync/confirm: JSON parse failed");
+                    Console.WriteLine(ex.ToString());
                     throw new HttpException(HttpStatusCode.BadRequest, "Bad Request: Invalid JSON format");
                 }
 

@@ -25,6 +25,7 @@ namespace PWManagerSync {
     public struct SyncRequest {
         [JsonProperty(PropertyName = "token")] public string User;
         [JsonProperty(PropertyName = "last_sync")] public DateTime LastSync;
+        [JsonProperty(PropertyName = "include_apps")] public bool IncludeApps;
         [JsonProperty(PropertyName = "idents")] public List<IdentEntity> Idents;
         [JsonProperty(PropertyName = "apps")] public List<AppEntity> Apps;
     }
@@ -72,15 +73,12 @@ namespace PWManagerSync {
 
             //user's complete data on the server
             var serverIdents = await Database.GetAllIdents(user);
-            var serverApps = await Database.GetAllApps(user);
 
             //user's data only present on the server (missing on client)
             var serverOnlyIdents = serverIdents.Where(c => !request.Idents.Any(s => c.Identifier == s.Identifier));
-            var serverOnlyApps = serverApps.Where(c => !request.Apps.Any(s => c.Package == s.Package));
 
             //user's data only present on the client (missing on server)
             var clientOnlyIdents = request.Idents.Where(c => !serverIdents.Any(s => c.Identifier == s.Identifier));
-            var clientOnlyApps = request.Apps.Where(c => !serverApps.Any(s => c.Package == s.Package));
 
             //data to be added and deleted on the server
             List<IdentEntity> serverAddIdents = [];
@@ -99,19 +97,11 @@ namespace PWManagerSync {
                 if (ident.Timestamp > lastSync) clientAddIdents.Add(ident);
                 else serverDeleteIdents.Add(ident.Identifier);
             }
-            foreach (var app in serverOnlyApps) {
-                if (app.Timestamp > lastSync) clientAddApps.Add(app);
-                else serverDeleteApps.Add(app.Package);
-            }
 
             //handle data only present on the client (missing on server): if changed/added after last sync, save on server, otherwise delete on client
             foreach (var ident in clientOnlyIdents) {
                 if (ident.Timestamp > lastSync) serverAddIdents.Add(ident);
                 else clientDeleteIdents.Add(ident.Identifier);
-            }
-            foreach (var app in clientOnlyApps) {
-                if (app.Timestamp > lastSync) serverAddApps.Add(app);
-                else clientDeleteApps.Add(app.Package);
             }
 
             //handle data present on both client and server: if server newer, push server to client, if client newer, save client on server - do nothing if equal
@@ -128,31 +118,50 @@ namespace PWManagerSync {
                     continue; //not present on client: ignore
                 }
             }
-            foreach (var serverApp in serverApps) {
-                try {
-                    var clientApp = request.Apps.First(c => serverApp.Package == c.Package);
-
-                    var timeDiff = (serverApp.Timestamp - clientApp.Timestamp).Ticks;
-
-                    if (Math.Abs(timeDiff) < TimeSpan.TicksPerMillisecond) continue; //same as above
-                    else if (timeDiff > 0) clientAddApps.Add(serverApp);
-                    else serverAddApps.Add(clientApp);
-                } catch {
-                    continue; //not present on client: ignore
-                }
-            }
 
             var uuid = Guid.NewGuid();
 
             //stage sync updates on the server
             await Database.StageInsertIdents(uuid, user, serverAddIdents);
             await Database.StageDeleteIdents(uuid, user, serverDeleteIdents);
-            await Database.StageInsertApps(uuid, user, serverAddApps);
-            await Database.StageDeleteApps(uuid, user, serverDeleteApps);
+
+            //same process for apps if they are included
+            if (request.IncludeApps) {
+                var serverApps = await Database.GetAllApps(user);
+                var serverOnlyApps = serverApps.Where(c => !request.Apps.Any(s => c.Package == s.Package));
+                var clientOnlyApps = request.Apps.Where(c => !serverApps.Any(s => c.Package == s.Package));
+
+                foreach (var app in serverOnlyApps) {
+                    if (app.Timestamp > lastSync) clientAddApps.Add(app);
+                    else serverDeleteApps.Add(app.Package);
+                }
+
+                foreach (var app in clientOnlyApps) {
+                    if (app.Timestamp > lastSync) serverAddApps.Add(app);
+                    else clientDeleteApps.Add(app.Package);
+                }
+
+                foreach (var serverApp in serverApps) {
+                    try {
+                        var clientApp = request.Apps.First(c => serverApp.Package == c.Package);
+
+                        var timeDiff = (serverApp.Timestamp - clientApp.Timestamp).Ticks;
+
+                        if (Math.Abs(timeDiff) < TimeSpan.TicksPerMillisecond) continue; //same as above
+                        else if (timeDiff > 0) clientAddApps.Add(serverApp);
+                        else serverAddApps.Add(clientApp);
+                    } catch {
+                        continue; //not present on client: ignore
+                    }
+                }
+
+                await Database.StageInsertApps(uuid, user, serverAddApps);
+                await Database.StageDeleteApps(uuid, user, serverDeleteApps);
+            }
 
             openRequests.Add(uuid, user);
 
-            Console.WriteLine($"SYNC: Staged {uuid} from user {user}");
+            Console.WriteLine($"SYNC: Staged {uuid} from user {user}, apps {request.IncludeApps}");
             Console.WriteLine($"  - Server: Add/change {serverAddIdents.Count} idents and {serverAddApps.Count} apps; Delete {serverDeleteIdents.Count} idents and {serverDeleteApps.Count} apps");
             Console.WriteLine($"  - Client: Add/change {clientAddIdents.Count} idents and {clientAddApps.Count} apps; Delete {clientDeleteIdents.Count} idents and {clientDeleteApps.Count} apps");
 
