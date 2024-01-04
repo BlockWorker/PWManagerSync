@@ -80,11 +80,12 @@ namespace PWManagerSync {
                 var req = context.Request;
                 var res = context.Response;
 
+                res.SetNonCacheable();
+                res.AddHeader("Access-Control-Allow-Origin", "*");
+
                 if (!string.Equals(req.Method, "GET", StringComparison.Ordinal)) { //only support GET method
                     throw new HttpException(HttpStatusCode.MethodNotAllowed);
                 }
-
-                res.SetNonCacheable();
 
                 await res.WriteAllJsonAsync("""{"pwm_sync_version": """ + VERSION + "}"); //simple JSON response with version
 
@@ -100,7 +101,18 @@ namespace PWManagerSync {
 
                 var path = req.Path ?? "/";
 
+                res.SetNonCacheable();
+                res.AddHeader("Access-Control-Allow-Origin", "*");
+
                 if (!string.Equals(req.Method, "POST", StringComparison.Ordinal)) { //only support POST method
+                    if (string.Equals(req.Method, "OPTIONS", StringComparison.Ordinal)) { //exception: CORS preflight request: handle and allow POST
+                        res.SetStatus(HttpStatusCode.NoContent);
+                        res.AddHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+                        res.AddHeader("Access-Control-Allow-Headers", "Content-Type");
+                        res.AddHeader("Access-Control-Max-Age", "86400");
+                        return true;
+                    }
+
                     throw new HttpException(HttpStatusCode.MethodNotAllowed);
                 }
 
@@ -109,8 +121,6 @@ namespace PWManagerSync {
                     Console.WriteLine("Rejecting sync/confirm: Content type must be JSON");
                     throw new HttpException(HttpStatusCode.UnsupportedMediaType);
                 }
-
-                res.SetNonCacheable();
 
                 var encoding = req.GetEncodingForContentType() ?? Encoding.UTF8;
                 var content = await req.Body.ReadAllAsStringAsync(encoding) ?? "";
